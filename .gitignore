@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+server/config.json
+server/dist/
+client/dist/
+*.log
+.DS_Store

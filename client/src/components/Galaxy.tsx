@@ -46,8 +46,8 @@ function lighten([r, g, b]: [number, number, number], amt: number): [number, num
 }
 
 function nodeRadius(movie: Movie): number {
-  const base = 5;
-  const bonus = ((movie.rating ?? 5) / 10) * 5;
+  const base = 22;
+  const bonus = ((movie.rating ?? 5) / 10) * 8;
   return base + bonus;
 }
 
@@ -69,6 +69,10 @@ export function Galaxy({ movies, selectedMovie, onSelectMovie }: GalaxyProps) {
   const hoveredRef = useRef<GalaxyNode | null>(null);
   const selectedRef = useRef<Movie | null>(selectedMovie);
   const drawRef = useRef<() => void>(() => undefined);
+  // Poster image cache — persists across re-renders; keyed by movie id
+  const imgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const imgLoadingRef = useRef<Set<string>>(new Set());   // in-flight requests
+  const imgFailedRef = useRef<Set<string>>(new Set());    // permanent failures
 
   // Keep selectedRef in sync without re-running the heavy effect
   useEffect(() => {
@@ -199,33 +203,104 @@ export function Galaxy({ movies, selectedMovie, onSelectMovie }: GalaxyProps) {
         const isHovered = hoveredRef.current?.id === node.id;
         const color = genreRgb(node.movie.genres);
 
+        // ── Lazy-load poster on first draw ───────────────────────────────────
+        const id = node.movie.id;
+        const cachedImg = imgCacheRef.current.get(id);
+        if (!cachedImg && !imgLoadingRef.current.has(id) && !imgFailedRef.current.has(id)) {
+          imgLoadingRef.current.add(id);
+          const img = new Image();
+          img.onload = () => {
+            imgLoadingRef.current.delete(id);
+            imgCacheRef.current.set(id, img);
+            drawRef.current(); // repaint once image is ready
+          };
+          img.onerror = () => {
+            imgLoadingRef.current.delete(id);
+            imgFailedRef.current.add(id);
+          };
+          img.src = `/api/poster/${id}`;
+        }
+
+        // ── Selection rings (drawn behind the node body) ─────────────────────
         if (isSelected) {
-          // Outer ring
           ctx.beginPath();
-          ctx.arc(node.x, node.y, r + 5 / k, 0, Math.PI * 2);
-          ctx.strokeStyle = rgb(...color, 0.6);
-          ctx.lineWidth = 1.5 / k;
+          ctx.arc(node.x, node.y, r + 6 / k, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          ctx.lineWidth = 2.5 / k;
           ctx.stroke();
-          // Inner ring
           ctx.beginPath();
-          ctx.arc(node.x, node.y, r + 9 / k, 0, Math.PI * 2);
-          ctx.strokeStyle = rgb(...color, 0.2);
-          ctx.lineWidth = 0.5 / k;
+          ctx.arc(node.x, node.y, r + 11 / k, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+          ctx.lineWidth = 0.8 / k;
+          ctx.stroke();
+        } else if (isHovered) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r + 4 / k, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+          ctx.lineWidth = 1.5 / k;
           ctx.stroke();
         }
 
-        // Node body with subtle radial gradient (lighter centre → darker edge)
-        const cx = node.x - r * 0.3;
-        const cy = node.y - r * 0.3;
-        const grad = ctx.createRadialGradient(cx, cy, 0, node.x, node.y, r);
-        const light = lighten(color, isSelected ? 0.5 : isHovered ? 0.35 : 0.18);
-        grad.addColorStop(0, rgb(...light));
-        grad.addColorStop(1, rgb(...color));
+        if (cachedImg) {
+          // ── Draw poster clipped to circle ──────────────────────────────────
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.clip();
 
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.fill();
+          // Cover-fit: scale so the shorter axis fills the diameter
+          const aspect = cachedImg.naturalWidth / cachedImg.naturalHeight;
+          const d = r * 2;
+          let sw: number, sh: number, sx: number, sy: number;
+          if (aspect <= 1) {
+            // Portrait poster — fill by width
+            sw = d;
+            sh = d / aspect;
+            sx = node.x - r;
+            sy = node.y - sh / 2;
+          } else {
+            // Landscape — fill by height
+            sw = d * aspect;
+            sh = d;
+            sx = node.x - sw / 2;
+            sy = node.y - r;
+          }
+          ctx.drawImage(cachedImg, sx, sy, sw, sh);
+
+          // Subtle edge vignette for depth
+          const vignette = ctx.createRadialGradient(node.x, node.y, r * 0.45, node.x, node.y, r);
+          vignette.addColorStop(0, 'rgba(0,0,0,0)');
+          vignette.addColorStop(1, 'rgba(0,0,0,0.3)');
+          ctx.fillStyle = vignette;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+
+          // Border ring over the poster
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.strokeStyle = isSelected
+            ? 'rgba(255,255,255,0.95)'
+            : isHovered
+              ? 'rgba(255,255,255,0.75)'
+              : 'rgba(255,255,255,0.35)';
+          ctx.lineWidth = (isSelected ? 2.5 : isHovered ? 2 : 1) / k;
+          ctx.stroke();
+        } else {
+          // ── Fallback dark circle (while loading / on error) ────────────────
+          const cx = node.x - r * 0.3;
+          const cy = node.y - r * 0.3;
+          const grad = ctx.createRadialGradient(cx, cy, 0, node.x, node.y, r);
+          const light = lighten(color, isSelected ? 0.5 : isHovered ? 0.35 : 0.18);
+          grad.addColorStop(0, rgb(...light));
+          grad.addColorStop(1, rgb(...color));
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
+          ctx.fill();
+        }
       });
 
       // ── Hover label ─────────────────────────────────────────────────────────
@@ -281,27 +356,27 @@ export function Galaxy({ movies, selectedMovie, onSelectMovie }: GalaxyProps) {
         'link',
         d3.forceLink<GalaxyNode, GalaxyLink>(links)
           .id(d => d.id)
-          .distance(90)
-          .strength(0.3)
+          .distance(140)
+          .strength(0.25)
       )
-      .force('charge', d3.forceManyBody<GalaxyNode>().strength(-160))
+      .force('charge', d3.forceManyBody<GalaxyNode>().strength(-500))
       .force(
         'collision',
-        d3.forceCollide<GalaxyNode>().radius(d => nodeRadius(d.movie) + 10)
+        d3.forceCollide<GalaxyNode>().radius(d => nodeRadius(d.movie) + 14)
       )
       .force(
         'x',
         d3.forceX<GalaxyNode>(node => {
           const g = node.movie.genres[0];
           return g && genreCenters[g] ? genreCenters[g].x : w / 2;
-        }).strength(0.05)
+        }).strength(0.06)
       )
       .force(
         'y',
         d3.forceY<GalaxyNode>(node => {
           const g = node.movie.genres[0];
           return g && genreCenters[g] ? genreCenters[g].y : h / 2;
-        }).strength(0.05)
+        }).strength(0.06)
       );
 
     simulation.on('tick', draw);

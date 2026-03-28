@@ -3,11 +3,13 @@ import { useMovies } from './hooks/useMovies';
 import { Galaxy } from './components/Galaxy';
 import { MoviePanel } from './components/MoviePanel';
 import { SetupScreen } from './components/SetupScreen';
-import type { Movie } from './types';
+import { TopBar } from './components/TopBar';
+import type { Movie, LayoutMode } from './types';
 
 export default function App() {
   const { movies, status, error, reload } = useMovies();
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
+  const [layout, setLayout] = useState<LayoutMode>('collaborative');
 
   const handleSelectMovie = useCallback((movie: Movie | null) => {
     setSelectedMovie(movie);
@@ -56,16 +58,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <span className="logo">Plex Galaxy</span>
-        <span className="movie-count">{movies.length} movies</span>
-      </header>
+      <TopBar layout={layout} onLayoutChange={setLayout} movieCount={movies.length} />
 
       <div className="galaxy-container">
         <Galaxy
           movies={movies}
           selectedMovie={selectedMovie}
           onSelectMovie={handleSelectMovie}
+          layout={layout}
         />
       </div>
 

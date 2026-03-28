@@ -32,5 +32,8 @@ export interface GalaxyNode extends d3.SimulationNodeDatum {
 }
 
 export interface GalaxyLink extends d3.SimulationLinkDatum<GalaxyNode> {
-  // no extra fields needed
+  /** Collaboration score (collaborative layout) or undefined */
+  value?: number;
 }
+
+export type LayoutMode = 'collaborative' | 'temporal' | 'mood';
